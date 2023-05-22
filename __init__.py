@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request, redirect, session
-from sqlalchemy import create_engine, Column, String, Integer, Float, MetaData, Table
+from sqlalchemy import create_engine, Column, String, Integer, Float, MetaData, Table, ForeignKey, DateTime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from functools import wraps
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = "your_secret_key"
@@ -24,6 +25,17 @@ class User(Base):
   password = Column(String(100), nullable=False)
 
 
+class Customer(Base):
+  __tablename__ = 'customers'
+
+  id = Column(Integer, primary_key=True)
+  name = Column(String(100), nullable=False)
+  phone = Column(String(20), nullable=False)
+  email = Column(String(100), nullable=False)
+  account_number = Column(String(20), nullable=False)
+  debt_balance = Column(Float, nullable=False)
+
+
 metadata = MetaData()
 
 customer_table = Table('customers', metadata,
@@ -33,6 +45,12 @@ customer_table = Table('customers', metadata,
                        Column('email', String(100), nullable=False),
                        Column('account_number', String(20), nullable=False),
                        Column('debt_balance', Float, nullable=False))
+
+payments_table = Table(
+  'payments', metadata, Column('id', Integer, primary_key=True),
+  Column('customer_id', Integer, ForeignKey('customers.id'), nullable=False),
+  Column('amount', Float, nullable=False),
+  Column('date', DateTime, default=datetime.utcnow, nullable=False))
 
 metadata.create_all(engine)
 
@@ -100,4 +118,34 @@ def dashboard():
   # Query the database for the user with the given id
   user = db_session.query(User).get(user_id)
 
-  return render_template('dashboard.html', user=user)
+  return render_template('dashboard.html',
+                         user=user,
+                         user_id=session['user_id'])
+
+
+@app.route('/payment', methods=['POST'])
+@login_required
+def payment():
+  amount = float(request.form['amount'])
+
+  # Query the database for the user with the given id
+  user = db_session.query(User).get(session['user_id'])
+
+  # Query the database for the customer associated with the user
+  customer = db_session.query(Customer).get(user.customer_id)
+
+  if customer:
+    # Create a new payment record
+    payment = payments_table.insert().values(customer_id=customer.id,
+                                             amount=amount,
+                                             date=datetime.utcnow())
+    db_session.execute(payment)
+    db_session.commit()
+
+    # Update the customer's debt balance
+    customer.debt_balance -= amount
+    db_session.commit()
+
+    return redirect('/dashboard')
+  else:
+    return redirect('/error')
